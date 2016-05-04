@@ -1,0 +1,8 @@
+[package]
+name = "yadict"
+version = "0.1.0"
+authors = ["Denis Kolodin <deniskolodin@gmail.com>"]
+
+[dependencies]
+curl = "0.2.19"
+rustc-serialize = "0.3.19"
