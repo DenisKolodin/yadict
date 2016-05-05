@@ -1,7 +1,11 @@
 [package]
 name = "yadict"
 version = "0.1.0"
+readme = "README.md"
 authors = ["Denis Kolodin <deniskolodin@gmail.com>"]
+description = "Library to work with Yandex.Dictionary"
+repository = "https://github.com/DenisKolodin/yadict"
+license = "MIT/Apache-2.0"
 
 [dependencies]
 hyper = "0.9.1"
