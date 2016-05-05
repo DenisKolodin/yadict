@@ -1,10 +1,12 @@
-extern crate curl;
+extern crate hyper;
 extern crate rustc_serialize;
 
 use std::env;
 use std::str::Utf8Error;
-use curl::ErrCode;
-use curl::http::Handle;
+use std::io::{Read, Error as IOError};
+use hyper::client::Client;
+use hyper::status::StatusCode;
+use hyper::error::Error as HyperError;
 use rustc_serialize::json::{Json, ParserError};
 
 pub const API_URL : &'static str = "https://dictionary.yandex.net/api/v1/dicservice.json";
@@ -44,7 +46,8 @@ pub enum RequestError {
 
     InvalidDataFormat,
     UnknownError(u64),
-    CurlError(ErrCode),
+    HyperError(HyperError),
+    IOError(IOError),
     EncodingError(Utf8Error),
     ParseError(ParserError),
 }
@@ -58,14 +61,20 @@ impl From<u64> for RequestError {
             403 => RequestError::DailyLimitExceeded,
             413 => RequestError::TextTooLong,
             501 => RequestError::LangNotSupported,
-            code => RequestError::UnknownError(code),
+            xxx => RequestError::UnknownError(xxx),
         }
     }
 }
 
-impl From<ErrCode> for RequestError {
-    fn from(e: ErrCode) -> Self {
-        RequestError::CurlError(e)
+impl From<HyperError> for RequestError {
+    fn from(e: HyperError) -> Self {
+        RequestError::HyperError(e)
+    }
+}
+
+impl From<IOError> for RequestError {
+    fn from(e: IOError) -> Self {
+        RequestError::IOError(e)
     }
 }
 
@@ -84,11 +93,13 @@ impl From<Utf8Error> for RequestError {
 impl Api {
 
     fn fetch_json(&self, url: &str) -> Result<Json, RequestError> {
-        let mut handle = Handle::new().ssl_verifypeer(false);
-        let response = try!(handle.get(url).exec());
-        let s = try!(std::str::from_utf8(response.get_body()));
-        let json = try!(Json::from_str(s));
-        if response.get_code() != 200 {
+        let url = format!("{}/{}", API_URL, url);
+        let client = Client::new();
+        let mut response = try!(client.get(&url).send());
+        let mut s = String::new();
+        try!(response.read_to_string(&mut s));
+        let json = try!(Json::from_str(&s));
+        if response.status != StatusCode::Ok {
             let object = try!(json.as_object().ok_or(RequestError::InvalidDataFormat));
             let code_object = try!(object.get("code").ok_or(RequestError::InvalidDataFormat));
             let code = try!(code_object.as_u64().ok_or(RequestError::InvalidDataFormat));
@@ -99,7 +110,7 @@ impl Api {
     }
 
     pub fn get_langs(&self) -> Result<Vec<String>, RequestError> {
-        let url = format!("{}/getLangs?key={}", API_URL, &self.token);
+        let url = format!("getLangs?key={}", &self.token);
         let json = try!(self.fetch_json(&url));
         let array = try!(json.as_array().ok_or(RequestError::InvalidDataFormat));
         let mut result = Vec::new();
@@ -112,7 +123,7 @@ impl Api {
     }
 
     pub fn lookup(&self, lang: &str, text: &str) -> Result<Json, RequestError> {
-        let url = format!("{}/lookup?key={}&lang={}&text={}", API_URL, &self.token, lang, text);
+        let url = format!("lookup?key={}&lang={}&text={}", &self.token, lang, text);
         let json = try!(self.fetch_json(&url));
         let object = try!(json.as_object().ok_or(RequestError::InvalidDataFormat));
         Ok(Json::Object(object.to_owned()))
