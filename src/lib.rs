@@ -7,7 +7,7 @@ use std::io::{Read, Error as IOError};
 use hyper::client::Client;
 use hyper::status::StatusCode;
 use hyper::error::Error as HyperError;
-use rustc_serialize::json::{Json, ParserError};
+use rustc_serialize::json::{Json, Object, ParserError};
 
 pub const API_URL : &'static str = "https://dictionary.yandex.net/api/v1/dicservice.json";
 
@@ -90,6 +90,37 @@ impl From<Utf8Error> for RequestError {
     }
 }
 
+pub struct Def {
+    pub word: Word,
+    pub trans: Vec<Word>,
+}
+
+pub struct Word {
+    pub text: String,
+    pub pos: Option<String>,
+    pub ts: Option<String>,
+}
+
+fn json_to_word(object: &Object) -> Result<Word, RequestError> {
+    let text = match object.get("text") {
+        Some(&Json::String(ref s)) => s.to_owned(),
+        _ => return Err(RequestError::InvalidDataFormat),
+    };
+    let pos = match object.get("pos") {
+        Some(&Json::String(ref s)) => Some(s.to_owned()),
+        _ => None,
+    };
+    let ts = match object.get("ts") {
+        Some(&Json::String(ref s)) => Some(s.to_owned()),
+        _ => None,
+    };
+    Ok(Word {
+        text: text,
+        pos: pos,
+        ts: ts,
+    })
+}
+
 impl Api {
 
     fn fetch_json(&self, url: &str) -> Result<Json, RequestError> {
@@ -128,6 +159,32 @@ impl Api {
         let object = try!(json.as_object().ok_or(RequestError::InvalidDataFormat));
         Ok(Json::Object(object.to_owned()))
     }
+
+    pub fn lookup_def(&self, lang: &str, text: &str) -> Result<Vec<Def>, RequestError> {
+        let json = try!(self.lookup(lang, text));
+        let mut result = Vec::new();
+        let object = try!(json.as_object().ok_or(RequestError::InvalidDataFormat));
+        let def_obj = try!(object.get("def").ok_or(RequestError::InvalidDataFormat));
+        let def_arr = try!(def_obj.as_array().ok_or(RequestError::InvalidDataFormat));
+        for item in def_arr {
+            let item = try!(item.as_object().ok_or(RequestError::InvalidDataFormat));
+            let word = try!(json_to_word(item));
+            let mut trans = Vec::new();
+            let trans_obj = try!(item.get("tr").ok_or(RequestError::InvalidDataFormat));
+            let trans_arr = try!(trans_obj.as_array().ok_or(RequestError::InvalidDataFormat));
+            for tr in trans_arr {
+                let tr_obj = try!(tr.as_object().ok_or(RequestError::InvalidDataFormat));
+                let tr_word = try!(json_to_word(tr_obj));
+                trans.push(tr_word);
+            }
+            let def = Def {
+                word: word,
+                trans: trans,
+            };
+            result.push(def);
+        }
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
@@ -146,6 +203,27 @@ mod tests {
     fn check_lookup() {
         let api = Api::from_env("YANDEX_DICTIONARY_TOKEN").unwrap();
         api.lookup("en-ru", "rust").unwrap();
+    }
+
+    #[test]
+    fn check_lookup_def() {
+        let api = Api::from_env("YANDEX_DICTIONARY_TOKEN").unwrap();
+        for def in api.lookup_def("en-ru", "rust").unwrap() {
+            assert_eq!(def.word.text, "rust");
+            assert_eq!(def.word.ts.as_ref().unwrap(), "r\u{28c}st");
+            assert!(def.trans.len() > 0);
+            let text = &def.trans[0].text;
+            let pos = def.word.pos.as_ref().unwrap();
+            if pos == "noun" {
+                assert_eq!(text, "\u{440}\u{436}\u{430}\u{432}\u{447}\u{438}\u{43d}\u{430}");
+            } else if pos == "verb" {
+                assert_eq!(text, "\u{440}\u{436}\u{430}\u{432}\u{435}\u{442}\u{44c}");
+            } else if pos == "adjective" {
+                assert_eq!(text, "\u{440}\u{436}\u{430}\u{432}\u{44b}\u{439}");
+            } else {
+                panic!("Unknown pos of 'rust' word: {}", pos);
+            }
+        }
     }
 }
 
